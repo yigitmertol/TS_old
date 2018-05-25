@@ -1,0 +1,16 @@
+sandp500/individual_stocks_5yr/
+*.local
+
+mnist_data/
+
+cryptocurrencypricehistory/
+
+*.csv
+
+\.DS_Store
+
+\.idea/
+
+__pycache__/
+
+copied\.py
