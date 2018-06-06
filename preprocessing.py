@@ -3,7 +3,7 @@ import math
 import numpy as np
 from random import shuffle
 from sklearn import linear_model
-
+from sklearn.metrics import mean_squared_error
 
 class processor:
 
@@ -21,7 +21,7 @@ class processor:
         self.with_feats = None
 
         # Selected features and predicted column
-        self.X = []
+        self.series = []
         self.Y = []
 
         # Training samples in format like:
@@ -37,25 +37,17 @@ class processor:
         self.X_te = []
         self.Y_te = []
 
-    # mean squared error of numeric two series
-    def mse(self, A, B):
-        index = 0
-        sse = 0
-        for a in A:
-            sse += math.pow((a - B[index]), 2)
-            index += 1
-        return math.sqrt(sse / index)
 
     # some financial feature engineering from
     # Deep Learning Stock Volatility with Google Domestic Trends
     # Ruoxuan Xiong1, Eric P. Nichols2 and Yuan Shen
 
     def u(self):
-        X = self.X
+        X = self.series
         return math.log(X['high'] / X['open'])
 
     def d(self):
-        X =  self.X
+        X =  self.series
         return math.log(X['low'] / X['open'])
 
 
@@ -64,7 +56,7 @@ class processor:
         if market == "All":
             self.all_data = pd.read_csv("sandp500/all_stocks_5yr.csv")
         else:
-            self.all_data = pd.read_csv("sandp500/individual_stocks_5yr/" + str(market) + "_data.csv", nrows=200)
+            self.all_data = pd.read_csv("sandp500/individual_stocks_5yr/" + str(market) + "_data.csv")
 
 
 
@@ -84,12 +76,12 @@ class processor:
         data['weekend'] = np.array(data['day_of_week'] == 1).__or__(np.array(data['day_of_week'] == 2))
 
         # returns is at t is the log difference close prices of t to t-1
-        data['return'] = [0.1 for row in range(len(data))]
-        data['normal_close'] = [0.1 for row in range(len(data))]
+        data['return'] = [float(1) for row in range(len(data))]
+        data['normal_close'] = [float(1) for row in range(len(data))]
         cl = data['close']
         for t in range(1, len(data)):
-            data['return'][t] = (cl[t] / cl[t - 1])
-            data['normal_close'][t] = float(cl[t]) / float(data['open'][0])
+            data['return'][t] = ((cl[t] / cl[t - 1])-1) * 100
+            data['normal_close'][t] = 100 * float(cl[t]) / float(data['open'][0])
 
 
             # print("unique")
@@ -98,9 +90,9 @@ class processor:
 
     def select_feats(self, feats, output):
         if feats == None:
-            self.X = self.with_feats
+            self.series = self.with_feats
         else :
-            self.X = self.with_feats[feats]
+            self.series = self.with_feats[feats]
 
         if output == None:
             self.Y = self.with_feats
@@ -110,12 +102,12 @@ class processor:
 
     # slides over t in X and generates input output time series
     def sliding_window_samples(self, _in_column, _window_len, _slide, _sight):
-        series_X = self.X[_in_column]
+        series_X = self.series[_in_column]
         series_Y = self.Y
 
         # t_0 here is beginning_of_in_wind
         t_0=0
-        while(t_0 + _window_len + _sight < len(self.X['t'])):
+        while(t_0 + _window_len + _sight < len(self.series['t'])):
             x = list(series_X[t_0 : t_0 + _window_len])
             y = [float(series_Y[t_0 + _window_len + _sight])]
             t_0 += _slide
@@ -138,6 +130,8 @@ class processor:
 
         if _divide == "samples":
             n = len(self.X_tr)
+
+
             self.X_te = self.X_tr[int((1 - ratio_te) * n):n - 1]
             self.Y_te = self.Y_tr[int((1 - ratio_te) * n):n - 1]
 
@@ -160,11 +154,13 @@ class processor:
 
 
     def get_next_batch(self):
-        n = self.maxn_full_batches
-        if self._batchno == self.maxn_full_batches:
+        N = self.maxn_full_batches
+
+        # if it is the last batch just return remaining samples
+        if self._batchno == N:
             self._batchno = 0
-            return self.X_tr[n*self.batchsize:len(self.X_tr)-1],\
-                   self.Y_tr[n*self.batchsize:len(self.X_tr)-1],\
+            return self.X_tr[N-1*self.batchsize:len(self.X_tr)-1],\
+                   self.Y_tr[N-1*self.batchsize:len(self.X_tr)-1],\
                    True
         else:
             n = self._batchno
@@ -178,22 +174,22 @@ class processor:
 
         # Baseline prediction where prediction = last observation(assuming observation
         if baseline == 'same':
-            X = self.X_val
-            Y = self.Y_val
-            sse = 0
-            counter = 0
-            for t in range(len(Y)):
-                sse += math.pow(Y[t][0]-X[t][len(X[t])-1],2)
-                counter+=1
-            return math.sqrt(sse/counter)
+            pred = []
+            for i in range(len(self.Y_val)):
+                x = self.X_val[i]
+                pred.append(x[len(x)-1])
+            return mean_squared_error(pred, self.Y_val)
 
-        if baseline == "linear":
+        elif baseline == "linear":
             lm = linear_model.LinearRegression()
             lm.fit(self.X_tr, self.Y_tr)
-            return self.mse(lm.predict(self.X_val), self.Y_val)
+            return mean_squared_error(lm.predict(self.X_val), self.Y_val)
 
-        if baseline == "vol_wei_mean":
-            a=2
+        elif baseline == "vol_wei_mean":
+            pred = []
+            for i in range(len(self.Y_val)):
+                x = self.X_val[i]
+                pred.append(x[len(x) - 1])
         # # volume weighted average of window
         # if baseline == "vol_we_ave":
         #

@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 import preprocessing
+import math
+from sklearn.metrics import mean_squared_error
 
 class Network:
     I_WINDOW = 10
@@ -17,14 +19,14 @@ class Network:
     def construct(self, args):
         with self.session.graph.as_default():
             # Inputs
-            self.input_series = tf.placeholder(tf.float32, [None, self.I_WINDOW], name="inputs")
-            self.next_val = tf.placeholder(tf.float32, [None, self.O_WINDOW], name="output")
+            self.X = tf.placeholder(tf.float32, [None, self.I_WINDOW], name="inputs")
+            self.Y = tf.placeholder(tf.float32, [None, self.O_WINDOW], name="output")
 
-            features = self.input_series
+            features = self.X
             hidden_layer = tf.layers.dense(features, args.hidden_layer, activation=tf.nn.relu, name="hidden_layer")
-            hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.relu, name="hidden_layer2")
-            hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.relu, name="hidden_layer3")
-            hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.relu, name="hidden_layer4")
+            hidden_layer = tf.layers.dense(hidden_layer, 100, activation=tf.nn.relu, name="hidden_layer2")
+            hidden_layer = tf.layers.dense(hidden_layer, 100, activation=tf.nn.relu, name="hidden_layer3")
+            # hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.sigmoid, name="hidden_layer4")
             # hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.relu, name="hidden_layer5")
             # hidden_layer = tf.layers.dense(hidden_layer, 20, activation=tf.nn.relu, name="hidden_layer6")
 
@@ -32,14 +34,16 @@ class Network:
             self.predictions = output_layer
 
             # Training
-            loss = tf.losses.mean_squared_error(self.next_val, output_layer, scope="loss")
+            loss = tf.losses.mean_squared_error(self.Y, output_layer, scope="loss")
             self.loss =loss
             global_step = tf.train.create_global_step()
-            self.training = tf.train.GradientDescentOptimizer(0.0001).minimize(loss, global_step=global_step, name="training")
+            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
 
-            self.rmse = tf.sqrt(loss)
+            self.rmse = tf.sqrt(tf.losses.mean_squared_error(self.predictions, self.Y))
 
-            self.ratio_offset = self.offset = tf.reduce_mean(tf.multiply(tf.div(tf.abs(tf.subtract(self.next_val, self.predictions)), self.predictions), 100))
+            # tf.reduce_mean((tf.square(tf.subtract(y, y_)))
+
+            self.ratio_offset = self.offset = tf.reduce_mean(tf.multiply(tf.div(tf.abs(tf.subtract(self.Y, self.predictions)), self.predictions), 100))
 
             # # Summaries
             # self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.next_val, self.predictions), tf.float32))
@@ -61,11 +65,11 @@ class Network:
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, _inputs, _output):
-        rmse, pred, _, __ = self.session.run([self.rmse, self.predictions, self.training, self.summaries["train"]], {self.input_series: _inputs, self.next_val: _output})
+        rmse, pred, _, __ = self.session.run([self.rmse, self.predictions, self.training, self.summaries["train"]], {self.X: _inputs, self.Y: _output})
         return rmse, pred
     def evaluate(self, dataset, _inputs, _output):
-        rmse, pred, real, _ = self.session.run([self.rmse, self.predictions, self.next_val , self.summaries[dataset]], {self.input_series: _inputs, self.next_val: _output})
-        return rmse, pred, real, self.session.run(self.summaries[dataset], {self.input_series: _inputs, self.next_val: _output})
+        rmse, pred, real, _ = self.session.run([self.rmse, self.predictions, self.Y , self.summaries[dataset]], {self.X: _inputs, self.Y: _output})
+        return rmse, pred, real, self.session.run(self.summaries[dataset], {self.X: _inputs, self.Y: _output})
 
 
 if __name__ == "__main__":
@@ -78,13 +82,13 @@ if __name__ == "__main__":
 
     # Parse arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", default=10, type=int, help="Batch size.")
-    parser.add_argument("--sight", default=5, type=int, help="how far in t after last observation we try to predict")
-    parser.add_argument("--epochs", default=10000, type=int, help="Number of epochs.")
-    parser.add_argument("--hidden_layer", default=5, type=int, help="Size of the hidden layer.")
+    parser.add_argument("--batch_size", default=5, type=int, help="Batch size.")
+    parser.add_argument("--sight", default=1, type=int, help="how far in t after last observation we try to predict")
+    parser.add_argument("--epochs", default=1000, type=int, help="Number of epochs.")
+    parser.add_argument("--hidden_layer", default=100, type=int, help="Size of the hidden layer.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--window_len", default=Network.I_WINDOW, type=int, help="Window length of input")
-    parser.add_argument("--market", default='ABBV', type=str, help="Window length of input")
+    parser.add_argument("--market", default='AAL', type=str, help="Window length of input")
     # parser.add_argument("--a", default=10, type=int, help="Window length of input")
 
     args = parser.parse_args()
@@ -105,8 +109,8 @@ if __name__ == "__main__":
     prcs.init(args.batch_size)
     prcs.load_SNP(args.market)
     prcs.make_feats()
-    prcs.select_feats(['t', 'normal_close'], 'normal_close')
-    prcs.sliding_window_samples('normal_close', _window_len=args.window_len, _slide=1, _sight=args.sight)
+    prcs.select_feats(['t', 'return'], 'return')
+    prcs.sliding_window_samples('return', _window_len=args.window_len, _slide=1, _sight=args.sight)
     prcs.divide_data( _sight=args.sight, _slide=1)
     prcs.shuffle_samples()
     print("Same as last baseline rmse: " +str(prcs.get_baseline_("same")))
@@ -121,21 +125,18 @@ if __name__ == "__main__":
     # Train
     for i in range(args.epochs):
         epoch_finished=False
+        prcs.shuffle_samples()
         while not epoch_finished:
-            prcs.shuffle_samples()
             input_, output_, epoch_finished = prcs.get_next_batch()
-
-            if(len(input_)==0):
-                continue
-            rmse_, pred = network.train(input_, output_)
+            network.train(input_, output_)
             # print("Prediction " + str(pred) + ", output:" + str(output_))
             # print("Error: ", mse_)
-        rmse, pred, real,  _ = network.evaluate("dev", prcs.X_val, prcs.Y_val)
-        if i%100==0:
-            # print("Validation set outputs and predictions: ")
-            # print(real, pred)
-            print("Val error: " ,round(rmse, 4))
-            print("Training error: ", round(rmse_, 4))
+        if i%10==0:
+            rmse, pred, real, _ = network.evaluate("dev", prcs.X_val, prcs.Y_val)
+            _, pred_, real_, _ = network.evaluate("dev", prcs.X_tr, prcs.Y_tr)
+            # print("Val error: " ,round(rmse, 4))
+            print("Val err: ", round(mean_squared_error(pred, real), 4))
+            print("Tr  err: ", round(mean_squared_error(pred_, real_) , 4))
     summary = network.evaluate("test", prcs.X_te, prcs.Y_te)
 
 
