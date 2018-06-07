@@ -9,19 +9,20 @@ class processor:
 
 
     _batchno = 0
+    market = ''
 
     def init(self, batch_size):
 
 
         # all data is the co collection of all time series and tables
-        self.all_data = None
+        self.raw_data = None
         self.batchsize = batch_size
 
         # all data with new devised features
         self.with_feats = None
 
         # Selected features and predicted column
-        self.series = []
+        self.input_ts = []
         self.Y = []
 
         # Training samples in format like:
@@ -43,26 +44,27 @@ class processor:
     # Ruoxuan Xiong1, Eric P. Nichols2 and Yuan Shen
 
     def u(self):
-        X = self.series
+        X = self.input_ts
         return math.log(X['high'] / X['open'])
 
     def d(self):
-        X =  self.series
+        X =  self.input_ts
         return math.log(X['low'] / X['open'])
 
 
     # loading data
     def load_SNP(self, market):
+        self.market = market
         if market == "All":
-            self.all_data = pd.read_csv("sandp500/all_stocks_5yr.csv")
+            self.raw_data = pd.read_csv("sandp500/all_stocks_5yr.csv")
         else:
-            self.all_data = pd.read_csv("sandp500/individual_stocks_5yr/" + str(market) + "_data.csv")
+            self.raw_data = pd.read_csv("sandp500/individual_stocks_5yr/" + str(market) + "_data.csv")
 
 
 
 
-    def make_feats(self):
-        data = self.all_data
+    def make_feats(self, save_file):
+        data = self.raw_data
         # Add t as the time variable
         data['t'] = range(len(data))
 
@@ -86,13 +88,18 @@ class processor:
 
             # print("unique")
         self.with_feats = data
+        if save_file:
+            self.with_feats.to_csv('SnP_market_'+str(self.market)+"_with_features.csv")
 
+    def load_SNP_with_feats(self, market):
+        self.market = market
+        self.with_feats = pd.read_csv('SnP_market_'+str(self.market)+"_with_features.csv")
 
     def select_feats(self, feats, output):
         if feats == None:
-            self.series = self.with_feats
+            self.input_ts = self.with_feats
         else :
-            self.series = self.with_feats[feats]
+            self.input_ts = self.with_feats[feats]
 
         if output == None:
             self.Y = self.with_feats
@@ -102,13 +109,13 @@ class processor:
 
     # slides over t in X and generates input output time series
     def sliding_window_samples(self, _in_column, _window_len, _slide, _sight):
-        series_X = self.series[_in_column]
+        series_X = self.input_ts[_in_column]
         series_Y = self.Y
 
         # t_0 here is beginning_of_in_wind
         t_0=0
-        while(t_0 + _window_len + _sight < len(self.series['t'])):
-            x = list(series_X[t_0 : t_0 + _window_len])
+        while(t_0 + _window_len + _sight < len(self.input_ts['t'])):
+            x = series_X[t_0 : t_0 + _window_len]
             y = [float(series_Y[t_0 + _window_len + _sight])]
             t_0 += _slide
             self.X_tr.append(x)
@@ -178,12 +185,12 @@ class processor:
             for i in range(len(self.Y_val)):
                 x = self.X_val[i]
                 pred.append(x[len(x)-1])
-            return mean_squared_error(pred, self.Y_val)
+            return np.sqrt(mean_squared_error(pred, self.Y_val))
 
         elif baseline == "linear":
             lm = linear_model.LinearRegression()
             lm.fit(self.X_tr, self.Y_tr)
-            return mean_squared_error(lm.predict(self.X_val), self.Y_val)
+            return np.sqrt(mean_squared_error(lm.predict(self.X_val), self.Y_val))
 
         elif baseline == "vol_wei_mean":
             pred = []
@@ -192,11 +199,16 @@ class processor:
                 pred.append(x[len(x) - 1])
         # # volume weighted average of window
         # if baseline == "vol_we_ave":
-        #
+
 
 
 # print()
 
 
-
-a=2
+prcs = processor()
+prcs.init(10)
+prcs.load_SNP_with_feats('AAL')
+# prcs.make_feats(save_file=True)
+prcs.select_feats(['t', 'return','month', 'day_of_week'], 'return')
+prcs.sliding_window_samples(_in_column=['return', 'month'],_window_len=10, _slide=1, _sight=1)
+prcs.divide_data( _sight=1, _slide=1)

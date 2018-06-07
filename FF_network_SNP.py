@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import pandas as pd
-import preprocessing
+import preprocessing_SNP
 import math
 from sklearn.metrics import mean_squared_error
 
@@ -104,8 +104,8 @@ if __name__ == "__main__":
     # # Load the data
     # from tensorflow.examples.tutorials import mnist
     # mnist = mnist.input_data.read_data_sets("mnist_data/", reshape=False, seed=42)
-    import preprocessing
-    prcs = preprocessing.processor()
+    import preprocessing_SNP
+    prcs = preprocessing_SNP.processor()
     prcs.init(args.batch_size)
     prcs.load_SNP(args.market)
     prcs.make_feats()
@@ -133,10 +133,17 @@ if __name__ == "__main__":
             # print("Error: ", mse_)
         if i%10==0:
             rmse, pred, real, _ = network.evaluate("dev", prcs.X_val, prcs.Y_val)
+
+
+            for some_patters in range(10):
+                print("for time series : " + str(prcs.X_val[some_patters][0:4]) + "...")
+                print("\nreal t + 1: " + str(prcs.Y_val[some_patters]))
+                print("\tprediction was: "  + str(pred[some_patters]))
+
             _, pred_, real_, _ = network.evaluate("dev", prcs.X_tr, prcs.Y_tr)
             # print("Val error: " ,round(rmse, 4))
-            print("Val err: ", round(mean_squared_error(pred, real), 4))
-            print("Tr  err: ", round(mean_squared_error(pred_, real_) , 4))
+            print("Val err: ", round(np.sqrt(mean_squared_error(pred, real)), 4))
+            print("Tr  err: ", round(np.sqrt(mean_squared_error(pred_, real_)), 4))
     summary = network.evaluate("test", prcs.X_te, prcs.Y_te)
 
 
