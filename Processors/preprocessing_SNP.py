@@ -17,6 +17,8 @@ class processor:
     Forecast_horizon = 0
     Target_is_feat = False
 
+    Ts = dict()
+
     def init(self, batch_size = 0, _input_window_l = 0, _horizon = 0):
 
         self.Input_window_length = _input_window_l
@@ -68,30 +70,39 @@ class processor:
     def load_SNP(self, market):
         self.Market = market
         if market == "All":
-            self.Data_loaded = pd.read_csv("sandp500/all_stocks_5yr.csv")
+            self.Data_loaded = pd.read_csv("../Data/sandp500/all_stocks_5yr.csv")
         else:
-            self.Data_loaded = pd.read_csv("sandp500/individual_stocks_5yr/" + str(market) + "_data.csv")
+            self.Data_loaded = pd.read_csv("../Data/sandp500/individual_stocks_5yr/" + str(market) + "_data.csv")
 
     def load_SNP_processed(self, market):
         self.Market = market
-        self.Data_loaded = pd.read_csv('./SnP_processed/SnP_market_' + str(self.Market) + "_with_features.csv")
+        self.Data_loaded = pd.read_csv('../Data/SnP_processed/SnP_market_' + str(self.Market) + "_with_features.csv")
+
+    def handle_nans(self):
+        rows, cols = self.Data_loaded.shape
+        for j in range(cols):
+            i=0
+            while i in range(rows):
+                if pd.isna(self.Data_loaded.iloc[i,j]):
+                    first_na = i
+                    while(pd.isna(self.Data_loaded.iloc[i+1,j])):
+                        i+=1
+                    last_na = i
+
+                    if first_na == 0:
+                        self.Data_loaded.iloc[first_na:last_na+1,j] = self.Data_loaded.iloc[last_na+1,j]
+                    elif last_na == rows:
+                        self.Data_loaded.iloc[first_na:, j] = self.Data_loaded.iloc[first_na-1, j]
+                    else:
+                        mean = (float(self.Data_loaded.iloc[last_na+1, j]) +
+                                float(self.Data_loaded.iloc[first_na-1, j]))/2
+                        self.Data_loaded.iloc[first_na:last_na + 1, j] = mean
+                i+=1
 
 
         # This function used once to create files in SnP processed no need until fresh clone
 
-    def process_markets(self):
-        for file_name in os.listdir("sandp500/individual_stocks_5yr"):
-            if '.DS_' in file_name:
-                continue
-            market = file_name.split('_')[0]
-            self.load_SNP(market)
-            # self.select_n_add_to_X()
-            self.make_feats(True)
 
-
-    def handle_column_with_nans(self, col):
-        for i in range(len(col)):
-            if col[i]
     def make_feats(self, save_file):
         data = self.Data_loaded
 
@@ -105,13 +116,12 @@ class processor:
         data['day_of_month'] = [d.split('-')[2] for d in date]
         data['day_of_week'] = data['t'] % 7
 
-
         # boolean is it a weekend
         data['weekend'] = [int(x) for x in np.array(data['day_of_week'] == 1).__or__(np.array(data['day_of_week'] == 2))]
 
         # returns is at t is the log difference close prices of t to t-1
         data['return'] = np.zeros_like(len(data['t']))
-        data['return'][0] = 1
+        data['return'][0] = 0
 
 
         normal = data['open'][0]
@@ -135,9 +145,21 @@ class processor:
 
         self.with_feats = data
         if save_file:
-            self.with_feats.to_csv('./SnP_processed/SnP_market_' + str(self.Market) + "_with_features.csv")
+            self.with_feats.to_csv('../SnP_processed/SnP_market_' + str(self.Market) + "_with_features.csv")
 
-    def select_n_add_to_Y(self,  _target = None):
+    def process_all_snp(self):
+        for file in os.listdir('../sandp500/individual_stocks_5yr'):
+            if file in [".DS_Store"]:
+                continue
+            market = file.split('_')[0]
+            self.load_SNP(market)
+            for col in self.Data_loaded.columns:
+                if any(pd.isna(self.Data_loaded[col])):
+                    self.handle_nans()
+
+            self.make_feats(True)
+
+    def add_Y(self, _target = None):
         if _target == None:
             self.Target = _target
             self.Y = None
@@ -147,10 +169,9 @@ class processor:
             self.Y = self.Data_loaded[_target]
             print("Regressed(predicted/targeted) variable(s) is " + str(_target) + " of "+ self.Market)
 
-    def select_n_add_to_X(self,  _feats = None):
+    def add_X(self, _feats = None):
 
         data = self.Data_loaded
-
         for feat in _feats:
             if feat == None:
                 for col in data.columns:
@@ -161,10 +182,13 @@ class processor:
             else:
                 self.X[str(self.Market) + "_" + str(feat)] = data[feat]
 
-    def handle_Inf(self):
-        self.X[~np.isfinite(self.X)] = 0
+    def gen_seq(self, _seq, _len):
+        self.X = pd.DataFrame({ "x" :  list(np.arange(0, _len)) })
 
-    def make_sliding_wind_samples(self, _slide =1, _trend = False,  _sets = 'all'):
+        if _seq == "sin":
+            self.Y = pd.DataFrame({ "x" : list(np.sin(np.array(self.X)*np.pi/30)) })
+
+    def make_windows(self, _slide =1, _trend = False, _sets ='all'):
 
         # slides over t in X and generates input output time series
         # Slided windows are subsets of Original self.X Data Frame ==>  they preserve structure as:
@@ -173,12 +197,12 @@ class processor:
 
         sets = dict()
         if _sets == 'all':
-            for set in ['tr', 'dev', 'te']:
+            for set in ['train', 'dev', 'test']:
                 sets[set] = dict()
 
-            sets['tr'] = [self.X_tr, self.Y_tr, self.X_w_tr, self.Y_w_tr]
+            sets['train'] = [self.X_tr, self.Y_tr, self.X_w_tr, self.Y_w_tr]
             sets['dev'] = [self.X_dev, self.Y_dev, self.X_w_dev, self.Y_w_dev]
-            sets['te'] = [self.X_te, self.Y_te, self.X_w_te, self.Y_w_te]
+            sets['test'] = [self.X_te, self.Y_te, self.X_w_te, self.Y_w_te]
 
         w = self.Input_window_length
         h = self.Forecast_horizon
@@ -187,33 +211,62 @@ class processor:
             T_0 = sets[set][0].index[0]
             t_0 = 0
             T_1 = sets[set][0].index[-1]
+            ts = []
             while (T_0 + w + h <= T_1):
                 x = np.array(sets[set][0][:][t_0:t_0 + w])
                 y = np.array([sets[set][1][T_0 + w + h-1]])
+                ts.append(T_0 + w + h-1)
+
                 trend = 1 if x[-1][0] < y[0] else 0
-                t_0 += _slide
-                T_0 += _slide
                 sets[set][2].append(x)
                 if _trend:
                     y = trend
+
                 sets[set][3].append(y)
-
-
+                t_0 += _slide
+                T_0 += _slide
+            self.Ts[str(set)] = ts
         if len(self.X_tr) < 10:
             raise ValueError("Too few number of samples(<10) choose a smaller input window, sliding or sight")
 
         self.maxn_full_batches = int(len(self.X_tr) / self.batchsize)
 
+        self.X_w_tr_original = list(self.X_w_tr)
+        self.Y_w_tr_original = list(self.Y_w_tr)
+
     def normalize(self):
+
         df = self.X_tr
-        self.X_tr = (df - df.mean()) / df.std()
+        mean = df.mean()
+        std = df.std()
+        self.X_tr = (df - mean) / std
 
         df = self.X_dev
-        self.X_dev = (df - df.mean()) / df.std()
+        self.X_dev = (df - mean) / std
 
         df = self.X_te
-        self.X_te = (df - df.mean()) / df.std()
+        self.X_te = (df - mean) / std
 
+    def make_dataset(self, inputs, target):
+
+        for input in inputs:
+            if input == "target":
+                self.Target_is_feat = True
+                self.add_X([target[1]])
+                continue
+            if input.split(',')[0] == "all":
+                for market_file_name in os.listdir('../Data/SnP_processed'):
+                    market = market_file_name.split('_')[2]
+                    if market == target[1]:
+                        continue
+                    self.load_SNP_processed(market)
+                    feats = input.split(',')[1:]
+                    self.add_X(feats)
+            else:
+                market = input.split(',')[0]
+                self.load_SNP_processed(market)
+                feats = input.split(',')[1:]
+                self.add_X(feats)
 
     def split_Train_dev_test(self, _slide, _divide ='temporal', _perc_of_test = 20, _perc_of_dev = 20):
 
@@ -264,27 +317,6 @@ class processor:
         shuffle(combined)
         self.X_w_tr[:], self.Y_w_tr[:] = zip(*combined)
 
-    # TODO Check get next batch
-    # def get_next_batch(self):
-    #
-    #     N = self.maxn_full_batches
-    #
-    #     # if it is the last batch just return remaining samples
-    #     if self.Batchno == N:
-    #         self.Batchno = 0
-    #         return self.X_tr[N-1*self.batchsize:len(self.X_tr)],\
-    #                self.Y_tr[N-1*self.batchsize:len(self.X_tr)],\
-    #                True
-    #     else:
-    #         n = self.Batchno
-    #         self.Batchno+=1
-    #         return self.X_tr[n*self.batchsize:(n+1)*self.batchsize],\
-    #                self.Y_tr[n*self.batchsize:(n+1)*self.batchsize],\
-    #                False
-
-    # def consolidate(self, feats):
-    #
-
     # TODO Check baseline functions are indeed correctly functioning
     def get_baseline_(self, _baseline):
 
@@ -295,27 +327,24 @@ class processor:
                 print("The target feat is not contained in regressor(predictors)")
                 return
             pred = []
-            for i in range(len(self.X_w_dev)):
-                # Conversion to NP array here no more
-                # FINAL DECISION MADE: CONVERT TO MATRIX FROM DATA FRAME IN SLIDING WINDOWS
-                x=np.array(self.X_w_dev[i][self.Input_window_length-1])
-                # Hence zero (after sample index and time index within the sample
-                # (these are actually overlapping except on time index))
-                # is always target(regressed observation)
-                pred.append(x[0])
-            return np.sqrt(mean_squared_error(pred, np.array(self.Y_w_dev)))
+            for i in self.Ts['test']:
+                pred.append(self.Y[i-self.Forecast_horizon])
+
+            return np.sqrt(mean_squared_error(pred, np.array(self.Y_w_te))), pred
 
         elif _baseline == "linear":
             lm = linear_model.LinearRegression()
             lm.fit(self.flatten_Xs(self.X_w_tr), self.Y_w_tr)
-            return np.sqrt(mean_squared_error(lm.predict(self.flatten_Xs(self.X_w_dev)), self.Y_w_dev))
+            print("Parameters of linear model:\n" + str(lm.coef_))
+            pred = lm.predict(self.flatten_Xs(self.X_w_te))
+            return np.sqrt(mean_squared_error(pred, self.Y_w_te)), pred
 
 
-        elif _baseline == "vol_wei_mean":
-            pred = []
-            for i in range(len(self.Y_dev)):
-                x = self.X_dev[i]
-                pred.append(x[len(x) - 1])
+        # elif _baseline == "vol_wei_mean":
+        #     pred = []
+        #     for i in range(len(self.Y_te)):
+        #         x = self.X_te[i]
+        #         pred.append(x[len(x) - 1])
         # # volume weighted average of window
         # if baseline == "vol_we_ave":
 
